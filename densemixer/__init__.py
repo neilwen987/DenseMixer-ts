@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 # Configuration system
 class Config:
     def __init__(self):
-        # Global switch - disabled by default for safety
+        # Global switch - disabled by default for safety.
         self.enabled = self._get_env_bool("DENSEMIXER_ENABLED", False)
-        
+        self.topk_mode = os.environ.get("DENSEMIXER_TOPK_MODE", "topk")
         # Model-specific switches - enabled by default when DENSEMIXER_ENABLED=1
         self.models = {
             "qwen3": self._get_env_bool("DENSEMIXER_QWEN3", True),

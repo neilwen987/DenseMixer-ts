@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
+from wandb import config
 from ..logging_utils import log_custom_forward_usage
-
+from .. import config as densemixer_config
 class CustomOlmoeSparseMoeBlock:
     @staticmethod
     def forward(self, hidden_states: torch.Tensor):
@@ -19,9 +20,18 @@ class CustomOlmoeSparseMoeBlock:
         # Compute routing logic
         router_logits = self.gate(flat_hidden).to(dtype=dtype)  # (B*L, num_experts)
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)  # (B*L, num_experts)
+        if densemixer_config.topk_mode == "topk":
+            # Select top-k experts
+            routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+        elif densemixer_config.topk_mode == "batch_topk":
+            # Select top-k experts per batch.
+            top_k_logits_flat, top_k_indices_flat = torch.topk(routing_weights.flatten(), self.top_k * N_tokens, dim=-1)
+            routing_weights_btopk = torch.zeros_like(routing_weights.flatten()).scatter_(-1, top_k_indices_flat, top_k_logits_flat).reshape(routing_weights.shape)
+            num_selected_per_token = (routing_weights_btopk > 0).sum(dim=-1)  # (N_tokens,)
+            max_selected = num_selected_per_token.max().item()
+            routing_weights_topk, selected_experts = torch.topk(routing_weights_btopk, max_selected, dim=-1)
 
-        # Select top-k experts
-        routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+        
         if self.norm_topk_prob:
             norm_ratio = routing_weights_topk.sum(dim=-1, keepdim=True)
             # Normalize top-k routing weights
