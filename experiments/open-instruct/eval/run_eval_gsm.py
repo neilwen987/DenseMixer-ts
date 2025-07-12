@@ -33,7 +33,17 @@ def main(args):
     
     # device = "cuda" if torch.cuda.is_available() else "cpu"
     # print(f"Using device: {device}")
-    
+    if args.use_batchtopk:
+        import os
+        os.environ['DENSEMIXER_ENABLED'] = '1'
+        os.environ['DENSEMIXER_OLMOE'] = '1'
+        os.environ['DENSEMIXER_TOPK_MODE'] = 'batch_topk'
+        import densemixer
+    from transformers.models.olmoe.modeling_olmoe import OlmoeSparseMoeBlock
+
+    # 检查forward方法是否已被替换
+    print(OlmoeSparseMoeBlock.forward.__module__)
+    # 如果patch成功，应该显示densemixer相关的模块名
     print("Loading data...")
     test_data = []
 
@@ -54,7 +64,8 @@ def main(args):
         assert float(example["answer"]), f"answer is not a valid number: {example['answer']}"
 
     if args.max_examples and len(test_data) > args.max_examples:
-        test_data = random.sample(test_data, args.max_examples)
+        # test_data = random.sample(test_data, args.max_examples)
+        test_data = test_data[:args.max_examples]
 
     ensure_dir(args.save_dir)
 
@@ -143,6 +154,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_name", type=str, default="")
     parser.add_argument("--test_file", type=str, default="")
+    parser.add_argument("--use_batchtopk", type=bool, default=False)
     parser.add_argument("--max_examples", type=int, default=None, help="maximum number of examples to evaluate.")
     parser.add_argument("--save_dir", type=str, default="results/gsm")
     parser.add_argument("--model_name_or_path", type=str, default=None, help="Model path.")
