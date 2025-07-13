@@ -23,10 +23,20 @@ class CustomOlmoeSparseMoeBlock:
         if densemixer_config.topk_mode == "topk":
             # Select top-k experts
             routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+            # print('using topk')
         elif densemixer_config.topk_mode == "batch_topk":
             # Select top-k experts per batch.
+            # print('using btopk  ')
             top_k_logits_flat, top_k_indices_flat = torch.topk(routing_weights.flatten(), self.top_k * N_tokens, dim=-1)
             routing_weights_btopk = torch.zeros_like(routing_weights.flatten()).scatter_(-1, top_k_indices_flat, top_k_logits_flat).reshape(routing_weights.shape)
+            num_selected_per_token = (routing_weights_btopk > 0).sum(dim=-1)  # (N_tokens,)
+            max_selected = num_selected_per_token.max().item()
+            routing_weights_topk, selected_experts = torch.topk(routing_weights_btopk, max_selected, dim=-1)
+        
+        elif densemixer_config.topk_mode == "sample_topk":
+            # print('using sample_topk')
+            top_k_logits_flat, top_k_indices_flat = torch.topk(routing_weights.view(batch_size,-1), self.top_k * seq_length, dim=-1)
+            routing_weights_btopk = torch.zeros_like(routing_weights.view(batch_size,-1)).scatter_(-1, top_k_indices_flat, top_k_logits_flat).reshape(routing_weights.shape)
             num_selected_per_token = (routing_weights_btopk > 0).sum(dim=-1)  # (N_tokens,)
             max_selected = num_selected_per_token.max().item()
             routing_weights_topk, selected_experts = torch.topk(routing_weights_btopk, max_selected, dim=-1)
@@ -59,6 +69,7 @@ class CustomOlmoeSparseMoeBlock:
         # For mapping top-k positions when accumulating sparse_outputs
         # selected_experts: (N_tokens, top_k)
 
+        # TODO: calculate relevant output in inference
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
             # Compute current expert output for all tokens
