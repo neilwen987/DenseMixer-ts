@@ -40,6 +40,10 @@ class Config:
         # Global switch - disabled by default for safety.
         self.enabled = self._get_env_bool("DENSEMIXER_ENABLED", False)
         self.topk_mode = os.environ.get("DENSEMIXER_TOPK_MODE", "topk")
+        
+        # 新增：实现方式选择
+        self.implementation = os.environ.get("DENSEMIXER_IMPLEMENTATION", "densemixer").lower()
+        
         # Model-specific switches - enabled by default when DENSEMIXER_ENABLED=1
         self.models = {
             "qwen3": self._get_env_bool("DENSEMIXER_QWEN3", True),
@@ -55,6 +59,14 @@ class Config:
     def is_model_enabled(self, model_name):
         """Check if a specific model is enabled"""
         return self.enabled and self.models.get(model_name, False)
+    
+    def use_conventional_implementation(self):
+        """Check if should use conventional implementation"""
+        return self.implementation == "conventional"
+    
+    def use_densemixer_implementation(self):
+        """Check if should use densemixer implementation"""
+        return self.implementation == "densemixer"
 
 # Initialize configuration
 config = Config()
