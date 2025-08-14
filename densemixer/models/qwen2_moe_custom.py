@@ -41,30 +41,33 @@ class CustomQwen2MoeSparseMoeBlock:
 
         # Select top-k experts and cast to match input dtype to avoid dtype mismatch on in-place updates
         if densemixer_config.topk_mode == "topk":
-            print('Using Topk,this is the {}-th call of this layer'.format(self.i))
+            # print('Using Topk,this is the {}-th call of this layer'.format(self.i))
             routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
         elif densemixer_config.topk_mode == "sample_topk":
-            # print('Using SPTopk,this is the {}-th call of this layer'.format(self.i))
             # print('using sample_topk')
-            routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
-            
-            _, top6_indices = torch.topk(routing_weights_reshaped, k=6, dim=-1)
-            max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-            routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
-            
-            _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
+            if self.training:
+                # print('use traing')
+                routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
+                
+                _, top6_indices = torch.topk(routing_weights_reshaped, k=6, dim=-1)
+                max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
+                routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
+                
+                _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
 
-            _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
-            
-            select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
-            select_mask.scatter_(-1, top1_indices, True)
-            expert_counts = (select_mask > 0).sum(dim=-1) 
-            max_experts_per_token = expert_counts.max()
-            filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
-            routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
-            # routing_weights_topk, selected_experts = handle_sample_topk_with_cache(
-            #     self, routing_weights, self.top_k, batch_size, seq_length, layer_id, N_tokens
-            # )
+                _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
+                
+                select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
+                select_mask.scatter_(-1, top1_indices, True)
+                expert_counts = (select_mask > 0).sum(dim=-1) 
+                max_experts_per_token = expert_counts.max()
+                filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
+                routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
+            else:
+                # print('Using SPTopk,this is the {}-th call of this layer'.format(self.i))
+                routing_weights_topk, selected_experts = handle_sample_topk_with_cache(
+                    self, routing_weights, self.top_k, batch_size, seq_length, layer_id, N_tokens
+                )
         routing_weights_topk = routing_weights_topk.to(dtype=dtype)
         if self.norm_topk_prob:
             routing_weights_topk = routing_weights_topk / routing_weights_topk.sum(dim=-1, keepdim=True)
@@ -107,7 +110,10 @@ class CustomQwen2MoeSparseMoeBlock:
         dense_outputs = dense_outputs + shared_expert_output
 
         # Combine sparse forward output and dense backward output
-        final_flat = sparse_outputs.detach() + (dense_outputs - dense_outputs.detach())
+        if self.training:
+            final_flat = sparse_outputs.detach() + (dense_outputs - dense_outputs.detach())
+        else:
+            final_flat = sparse_outputs.detach()
         final_flat = final_flat.to(dtype=dtype)
         final_output = final_flat.view(batch_size, seq_length, hidden_dim)
 
@@ -121,7 +127,6 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
     is_generating = seq_length == 1 and layer_id in _layer_routing_cache
 
     if is_generating:
-        snapshot_routing_cache('/home/ubuntu/tiansheng/26_ICLR_btk_moe/DenseMixer-ts/experiments/llama-factory/eval/routing_visual/gsm', "before_generate")
         # 生成模式：累积routing_weights
         cached_weights = _layer_routing_cache[layer_id]
         
@@ -132,6 +137,10 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
         # 更新缓存
         _layer_routing_cache[layer_id] = full_routing_weights.detach()
         
+        _, top6_indices = torch.topk(full_routing_weights, k=6, dim=-1)
+        max_mask = torch.zeros_like(full_routing_weights, dtype=torch.bool).scatter_(-1, top6_indices, True)
+        full_routing_weights = full_routing_weights * max_mask.detach()
+            
         _, top1_indices = torch.topk(full_routing_weights, k=1, dim=-1)
 
         _, flat_indices = torch.topk(full_routing_weights.view(batch_size, -1), k=top_k * seq_length, dim=1)
@@ -153,6 +162,11 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
     else:
         # 非生成模式或首次调用：直接执行sample_topk并初始化缓存
         routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
+
+        _, top6_indices = torch.topk(routing_weights_reshaped, k=6, dim=-1)
+        max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
+        routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
+       
         _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
 
         _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=top_k * seq_length, dim=1)
