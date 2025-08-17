@@ -42,29 +42,29 @@ class CustomOlmoeSparseMoeBlock:
         
         elif densemixer_config.topk_mode == "sample_topk":
             # print('using sample_topk')
-            # if self.training:
+            if self.training:
                 # print('use traing')
-            routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
-            
-            _, top6_indices = torch.topk(routing_weights_reshaped, k=12, dim=-1)
-            max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-            routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
-            
-            _, top1_indices = torch.topk(routing_weights_reshaped, k=4, dim=-1)
+                routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
+                
+                _, top6_indices = torch.topk(routing_weights_reshaped, k=12, dim=-1)
+                max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
+                routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
+                
+                _, top1_indices = torch.topk(routing_weights_reshaped, k=4, dim=-1)
 
-            _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
-            
-            select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
-            select_mask.scatter_(-1, top1_indices, True)
-            expert_counts = (select_mask > 0).sum(dim=-1) 
-            max_experts_per_token = expert_counts.max()
-            filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
-            routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
-            # else:
-            #     # print('Using SPTopk,this is the {}-th call of this layer'.format(self.i))
-            #     routing_weights_topk, selected_experts = handle_sample_topk_with_cache(
-            #         self, routing_weights, self.top_k, batch_size, seq_length, layer_id, N_tokens
-            #     )
+                _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
+                
+                select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
+                select_mask.scatter_(-1, top1_indices, True)
+                expert_counts = (select_mask > 0).sum(dim=-1) 
+                max_experts_per_token = expert_counts.max()
+                filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
+                routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
+            else:
+                # print('Using SPTopk,this is the {}-th call of this layer'.format(self.i))
+                routing_weights_topk, selected_experts = handle_sample_topk_with_cache(
+                    self, routing_weights, self.top_k, batch_size, seq_length, layer_id, N_tokens
+                )
         if self.norm_topk_prob:
             norm_ratio = routing_weights_topk.sum(dim=-1, keepdim=True)
             # Normalize top-k routing weights
