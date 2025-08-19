@@ -27,7 +27,7 @@ class CustomOlmoeSparseMoeBlock:
         router_logits = self.gate(flat_hidden).to(dtype=dtype)  # (B*L, num_experts)
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)  # (B*L, num_experts)
         if densemixer_config.topk_mode == "topk":
-            print('using topk')
+            # print('using topk')
             # Select top-k experts
             routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
             # print('using topk')
@@ -45,12 +45,12 @@ class CustomOlmoeSparseMoeBlock:
             if self.training:
                 # print('use traing')
                 routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
-                
-                _, top6_indices = torch.topk(routing_weights_reshaped, k=12, dim=-1)
-                max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-                routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
-                
-                _, top1_indices = torch.topk(routing_weights_reshaped, k=4, dim=-1)
+            
+                # _, top6_indices = torch.topk(routing_weights_reshaped, k=12, dim=-1)
+                # max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
+                # routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
+            
+                _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
 
                 _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
                 
@@ -140,11 +140,11 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
         # 将新token的routing_weights追加到历史中
         full_routing_weights = torch.cat([cached_weights, routing_weights.view(batch_size, 1, -1)], dim=1) # B, S+1, E
         seq_length = full_routing_weights.size(1)  # 更新序列长度        
-        _, top6_indices = torch.topk(full_routing_weights, k=12, dim=-1)
-        max_mask = torch.zeros_like(full_routing_weights, dtype=torch.bool).scatter_(-1, top6_indices, True)
-        full_routing_weights = full_routing_weights * max_mask.detach()
+        # _, top6_indices = torch.topk(full_routing_weights, k=12, dim=-1)
+        # max_mask = torch.zeros_like(full_routing_weights, dtype=torch.bool).scatter_(-1, top6_indices, True)
+        # full_routing_weights = full_routing_weights * max_mask.detach()
             
-        _, top1_indices = torch.topk(full_routing_weights, k=4, dim=-1)
+        _, top1_indices = torch.topk(full_routing_weights, k=1, dim=-1)
 
         _, flat_indices = torch.topk(full_routing_weights.view(batch_size, -1), k=top_k * seq_length, dim=1)
         
@@ -166,11 +166,11 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
     else:
         # 非生成模式或首次调用：直接执行sample_topk并初始化缓存
         routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
-        _, top6_indices = torch.topk(routing_weights_reshaped, k=12, dim=-1)
-        max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-        routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
+        # _, top6_indices = torch.topk(routing_weights_reshaped, k=12, dim=-1)
+        # max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
+        # routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
        
-        _, top1_indices = torch.topk(routing_weights_reshaped, k=4, dim=-1)
+        _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
 
         _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=top_k * seq_length, dim=1)
         
