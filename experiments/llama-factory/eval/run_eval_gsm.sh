@@ -8,7 +8,7 @@ export CUDA_VISIBLE_DEVICES=3
 python run_eval_gsm.py \
     --dataset_name RoxanneWsyw/gsm\
     --test_file test.jsonl \
-    --save_dir olmoe_results/gsm/sptopk1-10/sptopk-4 \
-    --model_name_or_path /home/ubuntu/tiansheng/26_ICLR_btk_moe/DenseMixer-ts/experiments/open-instruct/open-instruct/output/gsm/olmoe-sptopk1-10 \
-    --tokenizer_name_or_path /home/ubuntu/tiansheng/26_ICLR_btk_moe/DenseMixer-ts/experiments/open-instruct/open-instruct/output/gsm/olmoe-sptopk1-10 \
-    --eval_batch_size 64 \
+    --save_dir gsm/original_results/ \
+    --model_name_or_path allenai/OLMoE-1B-7B-0125 \
+    --tokenizer_name_or_path allenai/OLMoE-1B-7B-0125 \
+    --eval_batch_size 256
