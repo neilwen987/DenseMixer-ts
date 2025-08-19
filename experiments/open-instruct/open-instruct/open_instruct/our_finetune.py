@@ -499,7 +499,7 @@ class FlatArguments:
     """Immediately exit after caching the dataset"""
     try_auto_save_to_beaker: bool = True
     """Whether to try to save the model to Beaker dataset `/output` after training"""
-    push_to_hub: bool = True
+    push_to_hub: bool = False
     """Whether to upload the saved model to huggingface"""
     hf_entity: Optional[str] = None
     """The user or org name of the model repository from the Hugging Face Hub"""
