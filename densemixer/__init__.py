@@ -79,5 +79,6 @@ if config.enabled:
         logger.info(f"DenseMixer applied to: {', '.join(patched_models)}")
     else:
         logger.info("DenseMixer enabled but no models were patched")
+    logger.info("Using TopK mode: %s", config.topk_mode)
 else:
     logger.debug("DenseMixer disabled by default. Set DENSEMIXER_ENABLED=1 to enable.")
