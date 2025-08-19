@@ -13,8 +13,8 @@
 # Global defaults (overridden by config or CLI if provided)
 USER=${USER:-"xx"}
 
-NUM_GPUS=${NUM_GPUS:-2}
-CUDA_DEVICES=${CUDA_DEVICES:-"0,1"}
+NUM_GPUS=${NUM_GPUS:-8}
+CUDA_DEVICES=${CUDA_DEVICES:-"0,1,2,3,4,5,6,7"}
 MIXED_PRECISION=${MIXED_PRECISION:-"bf16"}
 DEEPSPEED_CONFIG_FILE=${DEEPSPEED_CONFIG_FILE:-"configs/ds_configs/stage3_no_offloading_accelerate.conf"}
 DEEPSPEED_PORT=${DEEPSPEED_PORT:-29504}
@@ -160,8 +160,8 @@ fi
 
 GRADIENT_ACC_STEPS=$(($TOTAL_BATCH_SIZE / $NUM_GPUS / $PER_DEVICE_TRAIN_BATCH_SIZE))
 
-EXP_NAME="$USER-$MODEL_TYPE-full"
-OUTPUT_DIR="${OUTPUT_BASE_DIR}$MODEL_TYPE-full"
+EXP_NAME="$MODEL_TYPE-$TASK-full"
+OUTPUT_DIR="${OUTPUT_BASE_DIR}$MODEL_TYPE-sptopk1-10"
 
 # For the test file: if TEST_FILE is set to empty or "None", do not pass the parameter.
 if [ -n "$TEST_FILE" ] && [ "$TEST_FILE" != "None" ]; then
@@ -187,7 +187,7 @@ done
 
 
 # Export the WandB API key (if needed)
-export WANDB_API_KEY=${WANDB_API_KEY:-"wandb_api_key"}
+export WANDB_API_KEY="1532edc16234575030f74f9a5edbfa977ec1ee4b"
 
 # Launch training with accelerate
 TRAIN_CMD="CUDA_VISIBLE_DEVICES=${CUDA_DEVICES} accelerate launch \
@@ -218,7 +218,7 @@ TRAIN_CMD="CUDA_VISIBLE_DEVICES=${CUDA_DEVICES} accelerate launch \
     --logging_steps 1 \
     --reduce_loss sum \
     --model_revision main \
-    --wandb_project_name $WANDB_PROJECT_NAME \
+    --wandb_project_name MoE-Finetune-qwen1.5-v2 \
     --dataset_name $DATASET_NAME  \
     --do_eval \
     --train_file ${TRAIN_FILE} \
