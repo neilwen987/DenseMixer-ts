@@ -56,6 +56,10 @@ def main(args):
     if args.max_examples and len(test_data) > args.max_examples:
         test_data = random.sample(test_data, args.max_examples)
 
+    test_data = test_data[:330]
+    test_data = test_data[330:660]
+    test_data = test_data[660:990]
+    test_data = test_data[990:]
     ensure_dir(args.save_dir)
 
     prompt_prefix = "Answer the following question.\n\n"
