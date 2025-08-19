@@ -160,7 +160,7 @@ fi
 
 GRADIENT_ACC_STEPS=$(($TOTAL_BATCH_SIZE / $NUM_GPUS / $PER_DEVICE_TRAIN_BATCH_SIZE))
 
-EXP_NAME="$MODEL_TYPE-$TASK-full"
+EXP_NAME="$MODEL_TYPE-$TASK-sptopk1-10"
 OUTPUT_DIR="${OUTPUT_BASE_DIR}$MODEL_TYPE-sptopk1-10"
 
 # For the test file: if TEST_FILE is set to empty or "None", do not pass the parameter.

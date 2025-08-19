@@ -56,9 +56,9 @@ def main(args):
     if args.max_examples and len(test_data) > args.max_examples:
         test_data = random.sample(test_data, args.max_examples)
 
-    test_data = test_data[:330]
-    test_data = test_data[330:660]
-    test_data = test_data[660:990]
+    # test_data = test_data[:330]
+    # test_data = test_data[330:660]
+    # test_data = test_data[660:990]
     test_data = test_data[990:]
     ensure_dir(args.save_dir)
 
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_name_or_path", type=str, default=None, help="Model path.")
     parser.add_argument("--tokenizer_name_or_path", type=str, default=None, help="Tokenizer path.")
     parser.add_argument("--use_slow_tokenizer", action="store_true", help="Use slow tokenizer.")
-    parser.add_argument("--eval_batch_size", type=int, default=1, help="Batch size.")
+    parser.add_argument("--eval_batch_size", type=int, default=64, help="Batch size.")
     parser.add_argument("--load_in_8bit", action="store_true", help="Load model in 8-bit mode.")
     parser.add_argument("--base_model_name_or_path", type=str, default='meta-llama/Llama-2-13b-hf')
     parser.add_argument("--expert_model_name_or_path", type=str, default='meta-llama/Llama-2-7b-chat-hf')
