@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: autoprogrammer/moonlight-moe-a2.7b
+model_name_or_path: moonshotai/Moonlight-16B-A3B
 trust_remote_code: true
 
 ### method
@@ -18,7 +18,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/moonlight-moe-a2.7b/full/sft_bs64/moonlight_esft_law_lr1e-5
+output_dir: saves/moonlight-moe-a3b/full/sft_bs64/moonlight_esft_law_lr1e-5
 logging_steps: 1
 save_strategy: "epoch" 
 save_total_limit: 5
