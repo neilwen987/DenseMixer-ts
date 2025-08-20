@@ -23,11 +23,16 @@ class CustomOlmoeSparseMoeBlock:
             self.i = 0
         self.i += 1
 
+        # override topk
+        override_topk = densemixer_config.topk
+        if override_topk is not None:
+            self.top_k = override_topk
+
         # Compute routing logic
         router_logits = self.gate(flat_hidden).to(dtype=dtype)  # (B*L, num_experts)
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)  # (B*L, num_experts)
         if densemixer_config.topk_mode == "topk":
-            # print('using topk')
+            print('using topk, topk: {}'.format(self.top_k))
             # Select top-k experts
             routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
             # print('using topk')

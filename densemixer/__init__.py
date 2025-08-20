@@ -50,6 +50,18 @@ class Config:
             "olmoe": self._get_env_bool("DENSEMIXER_OLMOE", True),
             "qwen2": self._get_env_bool("DENSEMIXER_QWEN2", True)
         }
+
+        self.topk = self._get_env_int("DENSEMIXER_TOPK", None)
+    
+    def _get_env_int(self, name, default=None):
+        """Get integer from environment variable"""
+        val = os.environ.get(name)
+        if val is None:
+            return default
+        try:
+            return int(val)
+        except ValueError:
+            return default
     
     def _get_env_bool(self, name, default=False):
         """Get boolean from environment variable"""
@@ -80,5 +92,7 @@ if config.enabled:
     else:
         logger.info("DenseMixer enabled but no models were patched")
     logger.info("Using TopK mode: %s", config.topk_mode)
+    if config.topk is not None:
+        logger.info("Overiding MoE top_k with: %d", config.topk)
 else:
     logger.debug("DenseMixer disabled by default. Set DENSEMIXER_ENABLED=1 to enable.")

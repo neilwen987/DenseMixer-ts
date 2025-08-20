@@ -34,6 +34,9 @@ NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-4}
 OUTPUT_SUFFIX=${OUTPUT_SUFFIX:-""}
 FREEZE_GATE=${FREEZE_GATE:-"false"}
 
+# Adding topk parser
+TOPK=${TOPK:-"8"}
+
 # # Common options for lora_attn mode
 COMMON_OPTS=""
 
@@ -99,6 +102,10 @@ while [[ $# -gt 0 ]]; do
             FREEZE_GATE="$2"
             shift 2
             ;;
+        --topk)
+            TOPK="$2"
+            shift 2
+            ;;
         --warmup_ratio)
             WARMUP_RATIO="$2"
             shift 2
@@ -160,8 +167,11 @@ fi
 
 GRADIENT_ACC_STEPS=$(($TOTAL_BATCH_SIZE / $NUM_GPUS / $PER_DEVICE_TRAIN_BATCH_SIZE))
 
-EXP_NAME="$MODEL_TYPE-$TASK-sptopk1-10"
-OUTPUT_DIR="${OUTPUT_BASE_DIR}$MODEL_TYPE-sptopk1-10"
+EXP_NAME="$MODEL_TYPE-$TASK-topk-$TOPK"
+OUTPUT_DIR="${OUTPUT_BASE_DIR}$MODEL_TYPE-topk-$TOPK"
+
+# pass custom topk to densemixer
+export DENSEMIXER_TOPK="${TOPK}"
 
 # For the test file: if TEST_FILE is set to empty or "None", do not pass the parameter.
 if [ -n "$TEST_FILE" ] && [ "$TEST_FILE" != "None" ]; then
@@ -177,7 +187,7 @@ else
 fi
 
 # Verify that the required variables are set either via the configuration or command line.
-REQUIRED_VARS=("MODEL_TYPE" "TASK")
+REQUIRED_VARS=("MODEL_TYPE" "TASK" "TOPK")
 for var in "${REQUIRED_VARS[@]}"; do
     if [ -z "${!var}" ]; then
         echo "Error: Variable $var is not set. Please set it in the config file or pass it as an argument."
@@ -218,7 +228,7 @@ TRAIN_CMD="CUDA_VISIBLE_DEVICES=${CUDA_DEVICES} accelerate launch \
     --logging_steps 1 \
     --reduce_loss sum \
     --model_revision main \
-    --wandb_project_name MoE-Finetune-qwen1.5-v2 \
+    --wandb_project_name MoE-Finetune-scaling_k \
     --dataset_name $DATASET_NAME  \
     --do_eval \
     --train_file ${TRAIN_FILE} \

@@ -30,7 +30,8 @@ export DENSEMIXER_ENABLED=1
 export DENSEMIXER_QWEN3=0
 export DENSEMIXER_QWEN2=0
 export DENSEMIXER_OLMOE=1
-export DENSEMIXER_TOPK_MODE=sample_topk
+export DENSEMIXER_TOPK_MODE=topk
+
 # Vanilla Router-Full.
 bash scripts/train/finetune/full.sh \
     --task gsm \
@@ -41,7 +42,8 @@ bash scripts/train/finetune/full.sh \
     --devices 0,1,2,3,4,5,6,7 \
     --port 29000 \
     --lr 1e-6 \
-    --do_eval false \ 
+    --topk 2 \
+    --do_eval false \
     --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 4 \
     --gradient_checkpointing True
