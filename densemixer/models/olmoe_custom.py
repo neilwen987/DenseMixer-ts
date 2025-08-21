@@ -51,7 +51,7 @@ class CustomOlmoeSparseMoeBlock:
                 # print('use traing')
                 routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
             
-                _, top6_indices = torch.topk(routing_weights_reshaped, k=10, dim=-1)
+                _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.topk + 2), dim=-1)
                 max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
                 routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
             
@@ -145,7 +145,7 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
         # 将新token的routing_weights追加到历史中
         full_routing_weights = torch.cat([cached_weights, routing_weights.view(batch_size, 1, -1)], dim=1) # B, S+1, E
         seq_length = full_routing_weights.size(1)  # 更新序列长度        
-        _, top6_indices = torch.topk(full_routing_weights, k=10, dim=-1)
+        _, top6_indices = torch.topk(full_routing_weights, k=(topk + 2), dim=-1)
         max_mask = torch.zeros_like(full_routing_weights, dtype=torch.bool).scatter_(-1, top6_indices, True)
         full_routing_weights = full_routing_weights * max_mask.detach()
             
@@ -171,7 +171,7 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
     else:
         # 非生成模式或首次调用：直接执行sample_topk并初始化缓存
         routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
-        _, top6_indices = torch.topk(routing_weights_reshaped, k=10, dim=-1)
+        _, top6_indices = torch.topk(routing_weights_reshaped, k=(topk + 2), dim=-1)
         max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
         routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
        
