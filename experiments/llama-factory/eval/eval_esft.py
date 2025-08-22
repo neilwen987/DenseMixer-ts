@@ -41,9 +41,10 @@ def main(args):
         if args.debug:
             print("Debugging mode: Shortening dataset to 16 samples.")
             dataset = dataset[:4]
-        
-
-        evaluator = evaluator_map[dataset_name](dataset, config)
+        # dataset = dataset[:50]
+        dataset = dataset[50:]
+        model,tokenizer = load_model(args.model_path, args.cache_dir)
+        evaluator = evaluator_map[dataset_name](dataset, config,model,tokenizer)
 
         results, metrics = evaluator.evaluate()
 

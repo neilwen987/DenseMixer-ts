@@ -4,7 +4,7 @@ import json
 import time
 import re
 
-from vllm import LLM, SamplingParams
+# from vllm import LLM, SamplingParams
 
 class VLLMWrapper:
     def __init__(self, model_path, gpu_count=2,max_new_tokens=128, temperature=0.7, top_p=0.9):
@@ -29,40 +29,42 @@ class VLLMWrapper:
 
 
 class BaseEvaluator:
+    def __init__(self, dataset, config,model,tokenizer):
+        self.dataset = dataset
+        self.max_new_tokens = config['max_new_tokens']
+        self.batch_size = config['eval_batch_size']
+        self.model = model
+        self.tokenizer = tokenizer
+
+    def infer(self,):
+        generator = pipeline('text-generation', model=self.model, tokenizer=self.tokenizer)
+        input_text = [i for i in self.dataset["prompt"]]
+
+        responses = generator(input_text, max_new_tokens=self.max_new_tokens, do_sample=False, return_full_text=True, temperature=0.7, top_p=0.9, batch_size=self.batch_size)
+
+        output = [{"prompt": input_text[i], "raw_prediction": responses[i][0]['generated_text'], "raw_answers": self.dataset['completion'][i]} for i in range(len(responses))]
+
+        return output
     # def __init__(self, dataset, config):
     #     self.dataset = dataset
     #     self.max_new_tokens = config['max_new_tokens']
     #     self.batch_size = config['eval_batch_size']
+    #     self.generator = VLLMWrapper(
+    #         config["model_path"],
+    #         config["gpu_count"],
+    #         max_new_tokens=self.max_new_tokens,
+    #         temperature=0.7,
+    #         top_p=0.9
+    #     )
 
-    # def infer(self, model, tokenizer):
-    #     generator = pipeline('text-generation', model=model, tokenizer=tokenizer)
+    # def infer(self):  # vLLM doesn't need these
     #     input_text = [i for i in self.dataset["prompt"]]
+    #     print(f"Generating {len(input_text)} prompts with vLLM...")
+    #     responses = self.generator.generate(input_text)
 
-    #     responses = generator(input_text, max_new_tokens=self.max_new_tokens, do_sample=True, return_full_text=True, temperature=0.7, top_p=0.9, batch_size=self.batch_size)
-
-    #     output = [{"prompt": input_text[i], "raw_prediction": responses[i][0]['generated_text'], "raw_answers": self.dataset['completion'][i]} for i in range(len(responses))]
+    #     output = [{"prompt": input_text[i], "raw_prediction": responses[i], "raw_answers": self.dataset['completion'][i]} for i in range(len(responses))]
 
     #     return output
-    def __init__(self, dataset, config):
-        self.dataset = dataset
-        self.max_new_tokens = config['max_new_tokens']
-        self.batch_size = config['eval_batch_size']
-        self.generator = VLLMWrapper(
-            config["model_path"],
-            config["gpu_count"],
-            max_new_tokens=self.max_new_tokens,
-            temperature=0.7,
-            top_p=0.9
-        )
-
-    def infer(self):  # vLLM doesn't need these
-        input_text = [i for i in self.dataset["prompt"]]
-        print(f"Generating {len(input_text)} prompts with vLLM...")
-        responses = self.generator.generate(input_text)
-
-        output = [{"prompt": input_text[i], "raw_prediction": responses[i], "raw_answers": self.dataset['completion'][i]} for i in range(len(responses))]
-
-        return output
 
     def eval_metric(self, results):
         scores = []
@@ -97,8 +99,8 @@ class BaseEvaluator:
 
 
 class GPT4Evaluator(BaseEvaluator):
-    def __init__(self, dataset, config):
-        super().__init__(dataset, config)
+    def __init__(self, dataset, config,model,tokenizer):
+        super().__init__(dataset, config,model,tokenizer)
         import openai
         self.client = openai.OpenAI(api_key=config['openai_api_key'])
 
