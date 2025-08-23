@@ -48,7 +48,7 @@ class Config:
         self.models = {
             "qwen3": self._get_env_bool("DENSEMIXER_QWEN3", True),
             "olmoe": self._get_env_bool("DENSEMIXER_OLMOE", True),
-            "qwen2": self._get_env_bool("DENSEMIXER_QWEN2", True)
+            "qwen2": self._get_env_bool("DENSEMIXER_QWEN2", True),
         }
     
     def _get_env_bool(self, name, default=False):
