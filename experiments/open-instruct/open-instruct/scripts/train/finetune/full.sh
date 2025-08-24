@@ -167,8 +167,15 @@ fi
 
 GRADIENT_ACC_STEPS=$(($TOTAL_BATCH_SIZE / $NUM_GPUS / $PER_DEVICE_TRAIN_BATCH_SIZE))
 
-EXP_NAME="$MODEL_TYPE-$TASK-topk-$TOPK"
-OUTPUT_DIR="${OUTPUT_BASE_DIR}$MODEL_TYPE-topk-$TOPK"
+
+if [ "$DENSEMIXER_TOPK_MODE" = "topk" ]; then
+    mode_str="topk"
+elif [ "$DENSEMIXER_TOPK_MODE" = "sample_topk" ]; then
+    mode_str="sptopk"
+fi
+
+EXP_NAME="$MODEL_TYPE-$TASK-${mode_str}-$TOPK"
+OUTPUT_DIR="${OUTPUT_BASE_DIR}${MODEL_TYPE}-${mode_str}-$TOPK"
 
 # pass custom topk to densemixer
 export DENSEMIXER_TOPK="${TOPK}"
