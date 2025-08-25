@@ -30,20 +30,21 @@ export DENSEMIXER_ENABLED=1
 export DENSEMIXER_QWEN3=0
 export DENSEMIXER_QWEN2=0
 export DENSEMIXER_OLMOE=1
-export DENSEMIXER_TOPK_MODE=topk
+export DENSEMIXER_TOPK_MODE="topk"
 
-# Vanilla Router-Full.
+
+# Vanilla Router-Full
 bash scripts/train/finetune/full.sh \
-    --task gsm \
+    --task summary \
     --model olmoe \
     --total_batch_size 256 \
-    --num_train_epochs 3 \
+    --num_train_epochs 2 \
     --num_gpus 8 \
     --devices 0,1,2,3,4,5,6,7 \
     --port 29000 \
-    --lr 1e-6 \
-    --topk 1 \
+    --topk 2 \
     --do_eval false \
+    --lr 2e-5 \
     --per_device_train_batch_size 4 \
-    --per_device_eval_batch_size 1 \
+    --per_device_eval_batch_size 2\
     --gradient_checkpointing True
