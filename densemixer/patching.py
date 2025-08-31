@@ -60,12 +60,37 @@ def apply_patches(config):
         if apply_qwen3_moe_patch(config):
             implementation = "conventional" if config.use_conventional_implementation() else "densemixer"
             patched_models.append(f"Qwen3-MoE-{implementation}")
+
+    # Patch GPT-OSS-MoE if enabled
+    if config.is_model_enabled("gpt_oss"):
+        if apply_gpt_oss_moe_patch(config):
+            implementation = "conventional" if config.use_conventional_implementation() else "densemixer"
+            patched_models.append(f"GPT-OSS-MoE-{implementation}")
     
     if patched_models:
         logger.info(f"DenseMixer patches successfully applied to: {', '.join(patched_models)}")
     
     return patched_models
 
+
+def apply_gpt_oss_moe_patch(config):
+    """Apply patch to GPT-OSS-MoE model"""
+    try:
+        # Replace the class used for construction so __init__ differences take effect
+        from transformers.models.gpt_oss import modeling_gpt_oss
+        from .models.gptoss_moe_custom import CustomGptOssMLP
+
+        # Monkey-patch the class symbol
+        modeling_gpt_oss.GptOssMLP = CustomGptOssMLP
+
+        logger.info("Successfully patched GPT-OSS-MoE by replacing GptOssMLP class")
+        return True
+    except ImportError as e:
+        logger.warning(f"GPT-OSS-MoE module not found: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Error patching GPT-OSS-MoE: {e}")
+        return False
 
 def apply_olmoe_patch(config):
     """Apply patch to OLMoE model"""
@@ -91,7 +116,6 @@ def apply_olmoe_patch(config):
     except Exception as e:
         logger.error(f"Error patching OLMoE: {e}")
         return False
-
 
 def apply_qwen2_moe_patch(config):
     """Apply patch to Qwen2-MoE model"""
