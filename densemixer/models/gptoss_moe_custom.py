@@ -3,6 +3,7 @@ from typing import Callable, Optional, Union
 import torch
 from torch import nn
 from torch.nn import functional as F
+from .. import config as densemixer_config
 
 class CustomGptOssExperts(nn.Module):
     def __init__(self, config):
@@ -84,42 +85,60 @@ class CustomGptOssTopKRouter(nn.Module):
         self.bias = nn.Parameter(torch.empty(self.num_experts))
 
     def forward(self, hidden_states):
-        batch_size, seq_length, hidden_dim = hidden_states.shape
-        dtype = hidden_states.dtype
-        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = F.linear(hidden_states, self.weight, self.bias)  # (seq_len, num_experts)
-        
-        if 1:
-            routing_weights = torch.nn.functional.softmax(router_logits, dim=1, dtype=router_logits.dtype)
+        # 将输入展平以计算路由 logits
+        if hidden_states.dim() == 3:
+            batch_size, seq_length, _ = hidden_states.shape
         else:
-            # router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-            # router_top_value = torch.nn.functional.softmax(router_logits, dim=1, dtype=router_logits.dtype)
-            assert False, "In GPT-OSS-MoE, softmax is after topk"
+            batch_size, seq_length = 1, hidden_states.shape[0]
+        flat_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(flat_states, self.weight, self.bias)  # (N_tokens, num_experts)
 
-        if self.training:
-            # print('use traing')
-            routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
-            
-            _, top6_indices = torch.topk(routing_weights_reshaped, k=6, dim=-1)
-            max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-            routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
-            
-            _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
-
-            _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
-            
-            select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
-            select_mask.scatter_(-1, top1_indices, True)
-            expert_counts = (select_mask > 0).sum(dim=-1) 
-            max_experts_per_token = expert_counts.max()
-            filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
-            routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
-        else:
-            assert False, "Inference mode not implemented"
+        if densemixer_config.topk_mode == "topk":
+            # 先 topk 再在选中集合上 softmax
+            router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)
+            router_top_value = torch.nn.functional.softmax(
+                router_top_value, dim=1, dtype=router_top_value.dtype
+            )
+            router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
         
-        router_scores = torch.zeros_like(router_logits).scatter_(1, selected_experts, routing_weights_topk)
+        elif densemixer_config.topk_mode == "sample_topk":
+            # 先在 batch 维度上采样 token-expert 子集，再对被采样集合做 masked softmax
+            logits_bsxe = router_logits.view(batch_size, seq_length, self.num_experts)
 
-        return router_scores, selected_experts
+            cap_topk = densemixer_config.cap_topk
+            if cap_topk is not None:
+                cap_k = max(1, int(cap_topk))
+                # 逐 token 截断：每个 token 仅保留其前 cap_k 个 expert
+                _, cap_indices_tok = torch.topk(logits_bsxe, k=cap_k, dim=-1)
+                cap_mask = torch.zeros_like(logits_bsxe, dtype=torch.bool).scatter(-1, cap_indices_tok, True)
+            else:
+                cap_k = None
+                cap_mask = torch.ones_like(logits_bsxe, dtype=torch.bool)
+
+            # 每个 batch 选出 top_k * seq_length 个 (token, expert) 位置
+            k_per_batch = max(1, (self.topk - 1) * int(seq_length))
+            # 仅在 cap_mask 允许的位置上进行 batch 级采样
+            logits_cap = logits_bsxe.masked_fill(~cap_mask, float('-inf'))
+            _, flat_indices = torch.topk(logits_cap.view(batch_size, -1), k=k_per_batch, dim=1)
+            select_mask = torch.zeros_like(logits_bsxe.view(batch_size, -1), dtype=torch.bool)
+            select_mask = select_mask.scatter(-1, flat_indices, True).view_as(logits_bsxe)
+
+            # 保障每个 token 至少包含其 top1 expert
+            _, top1_indices = torch.topk(logits_bsxe, k=1, dim=-1)
+            select_mask = select_mask.scatter(-1, top1_indices, True)
+            allowed_mask = (select_mask & cap_mask).scatter(-1, top1_indices, True)
+            # allowed_mask = (select_mask & cap_mask)
+
+            # 仅在允许集合上选出最终 K，并在这些位置上 softmax
+            masked_logits = logits_bsxe.masked_fill(~allowed_mask, float('-inf')).view(-1, self.num_experts)
+            topk_values, router_indices = torch.topk(masked_logits, k=cap_k, dim=-1)
+            final_logits = torch.gather(masked_logits, 1, router_indices)
+            final_probs = F.softmax(final_logits, dim=1, dtype=final_logits.dtype)
+            router_scores = torch.zeros_like(router_logits)
+            router_scores.scatter_(1, router_indices, final_probs)
+        else:
+            assert False, "Invalid topk mode"
+        return router_scores, router_indices
 
 
 
