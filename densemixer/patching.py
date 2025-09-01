@@ -84,10 +84,12 @@ def apply_gpt_oss_moe_patch(config):
     try:
         # Replace the class used for construction so __init__ differences take effect
         from transformers.models.gpt_oss import modeling_gpt_oss
-        from .models.gptoss_moe_custom import CustomGptOssMLP
+        from .models.gptoss_moe_custom import CustomGptOssMLP,CustomGptOssTopKRouter,CustomGptOssExperts
 
         # Monkey-patch the class symbol
-        modeling_gpt_oss.GptOssMLP = CustomGptOssMLP
+        # modeling_gpt_oss.GptOssMLP.forward = CustomGptOssMLP.forward
+        modeling_gpt_oss.GptOssTopKRouter.forward = CustomGptOssTopKRouter.forward
+        # modeling_gpt_oss.GptOssExperts.forward = CustomGptOssExperts.forward
 
         logger.info("Successfully patched GPT-OSS-MoE by replacing GptOssMLP class")
         return True

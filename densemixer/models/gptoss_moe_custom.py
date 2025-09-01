@@ -21,14 +21,14 @@ class CustomGptOssExperts(nn.Module):
         self.limit = 7.0
 
         # Initialize expert parameters to avoid NaNs from uninitialized memory
-        self._reset_parameters()
+        # self._reset_parameters()
 
-    def _reset_parameters(self) -> None:
-        for expert_idx in range(self.num_experts):
-            nn.init.xavier_uniform_(self.gate_up_proj[expert_idx])
-            nn.init.zeros_(self.gate_up_proj_bias[expert_idx])
-            nn.init.xavier_uniform_(self.down_proj[expert_idx])
-            nn.init.zeros_(self.down_proj_bias[expert_idx])
+    # def _reset_parameters(self) -> None:
+    #     for expert_idx in range(self.num_experts):
+    #         nn.init.xavier_uniform_(self.gate_up_proj[expert_idx])
+    #         nn.init.zeros_(self.gate_up_proj_bias[expert_idx])
+    #         nn.init.xavier_uniform_(self.down_proj[expert_idx])
+    #         nn.init.zeros_(self.down_proj_bias[expert_idx])
 
     def forward_ds(self, hidden_states: torch.Tensor, router_indices=None, routing_weights_topk=None, routing_weights_full=None) -> torch.Tensor:
         """
@@ -150,75 +150,63 @@ class CustomGptOssExperts(nn.Module):
             next_states = next_states.sum(dim=0)
         return next_states
 
-class CustomGptOssTopKRouter(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.top_k = config.num_experts_per_tok
-        self.num_experts = config.num_local_experts
-        self.hidden_dim = config.hidden_size
-        self.weight = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim))
-        self.bias = nn.Parameter(torch.empty(self.num_experts))
-
+class CustomGptOssTopKRouter():
+    @staticmethod
     def forward(self, hidden_states):
-        # 将输入展平以计算路由 logits
-        if hidden_states.dim() == 3:
-            batch_size, seq_length, _ = hidden_states.shape
-        else:
-            batch_size, seq_length = 1, hidden_states.shape[0]
-        flat_states = hidden_states.reshape(-1, self.hidden_dim)
-        # override topk if configured
+        batch_size, seq_length, _ = hidden_states.shape
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight, self.bias)  # (seq_len, num_experts)
+        
+        
+        layer_id = getattr(self, 'layer_idx', id(self))
+        if not hasattr(self, 'i'):
+            self.i = 0
+        self.i += 1
+
+        # override topk
         override_topk = densemixer_config.topk
         if override_topk is not None:
             self.top_k = override_topk
 
-        router_logits = F.linear(flat_states, self.weight, self.bias)  # (N_tokens, num_experts)
-        # full softmax 权重（用于后续 dense backward）
-        routing_weights_full = F.softmax(router_logits, dim=1, dtype=torch.float)
-        # USE pre-softmax for consistency with dense backward
-
         if densemixer_config.topk_mode == "topk":
-            # 先 topk 再在选中集合上 softmax
-            router_top_value, router_indices = torch.topk(routing_weights_full, self.top_k, dim=-1)
-            router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
-        
+            router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
         elif densemixer_config.topk_mode == "sample_topk":
-            # pre-softmax 概率
-            probs_bsxe = routing_weights_full.view(batch_size, seq_length, self.num_experts)
+            if True:
+                logits_bsxe = router_logits.view(batch_size, seq_length, self.num_experts)
 
-            cap_topk = densemixer_config.cap_topk
-            if cap_topk is not None:
-                cap_k = max(1, int(cap_topk))
-                # 逐 token 截断：每个 token 仅保留其前 cap_k 个 expert（按概率）
-                _, cap_indices_tok = torch.topk(probs_bsxe, k=cap_k, dim=-1)
-                cap_mask = torch.zeros_like(probs_bsxe, dtype=torch.bool).scatter(-1, cap_indices_tok, True)
+                # adding cap
+                cap_topk = densemixer_config.cap_topk =3
+                if cap_topk is not None:
+                    cap_k = max(1, int(cap_topk))
+                    # 逐 token 截断：每个 token 仅保留其前 cap_k 个 expert
+                    _, cap_indices_tok = torch.topk(logits_bsxe, k=cap_k, dim=-1)
+                    cap_mask = torch.zeros_like(logits_bsxe, dtype=torch.bool).scatter(-1, cap_indices_tok, True)
+                    logits_bsxe = logits_bsxe.masked_fill(~cap_mask, -float('inf'))
+                else:
+                    cap_k = self.top_k
+                
+                top1_logits, top1_indices = torch.topk(logits_bsxe, k=1, dim=-1)
+                minimal_mask = torch.zeros_like(logits_bsxe, dtype=torch.bool).scatter(-1, top1_indices, True)
+                logits_bsxe = logits_bsxe.masked_fill(minimal_mask, -float('inf'))
+
+                flat_top_value, flat_top_indices = torch.topk(logits_bsxe.view(batch_size, -1), k=(self.top_k -1) * seq_length, dim=-1)
+                final_score = torch.full_like(logits_bsxe.view(batch_size, -1), float('-inf'))
+                final_score = final_score.scatter_(-1, flat_top_indices, flat_top_value).reshape(*logits_bsxe.shape)
+                final_score = final_score.scatter_(-1, top1_indices, top1_logits).view(-1,self.num_experts)
+                router_top_value, router_indices = torch.topk(final_score, cap_k, dim=-1)
+
             else:
-                cap_k = None
-                cap_mask = torch.ones_like(probs_bsxe, dtype=torch.bool)
-
-            # 每个 batch 选出若干 (token, expert) 位置（按概率）
-            k_per_batch = max(1, (self.top_k - 1) * int(seq_length))
-            probs_cap = probs_bsxe.masked_fill(~cap_mask, 0.0)
-            _, flat_indices = torch.topk(probs_cap.view(batch_size, -1), k=k_per_batch, dim=1)
-            select_mask = torch.zeros_like(probs_bsxe.view(batch_size, -1), dtype=torch.bool)
-            select_mask = select_mask.scatter(-1, flat_indices, True).view_as(probs_bsxe)
-
-            # 保障每个 token 至少包含其 top1 expert（按概率）
-            _, top1_indices = torch.topk(probs_bsxe, k=1, dim=-1)
-            select_mask = select_mask.scatter(-1, top1_indices, True)
-            allowed_mask = (select_mask & cap_mask).scatter(-1, top1_indices, True)
-
-            # 仅在允许集合上选出最终 K（按概率），并在选中集合内重新归一化
-            masked_probs = probs_bsxe.masked_fill(~allowed_mask, 0.0).view(-1, self.num_experts)
-            topk_values, router_indices = torch.topk(masked_probs, k=cap_k, dim=-1)
-            selected_probs = torch.gather(masked_probs, 1, router_indices)
-            norm = selected_probs.sum(dim=1, keepdim=True).clamp_min(1e-12)
-            final_probs = selected_probs / norm
-            router_scores = torch.zeros_like(router_logits)
-            router_scores.scatter_(1, router_indices, final_probs)
+                raise ValueError(f"inference not supported for sample_topk")   # (seq_len, top_k)
+        elif densemixer_config.topk_mode == "batch_topk":
+            router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
         else:
-            assert False, "Invalid topk mode"
-        return router_scores, router_indices, routing_weights_full
-
+            raise ValueError(f"Invalid topk mode: {densemixer_config.topk_mode}")
+        
+        
+        router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=router_top_value.dtype)
+        router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
+        return router_scores, router_indices
+    
 
 
 class CustomGptOssMLP(nn.Module):
@@ -233,8 +221,7 @@ class CustomGptOssMLP(nn.Module):
         router_scores, router_indices, routing_weights_full = self.router(hidden_states)
         routed_out = self.experts(
             hidden_states,
-            router_indices=router_indices,
-            routing_weights_topk=router_scores,
-            routing_weights_full=routing_weights_full,
+            router_indices,
+            router_scores,
         )
         return routed_out, router_scores

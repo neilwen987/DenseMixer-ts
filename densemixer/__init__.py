@@ -49,10 +49,12 @@ class Config:
             "qwen3": self._get_env_bool("DENSEMIXER_QWEN3", True),
             "olmoe": self._get_env_bool("DENSEMIXER_OLMOE", True),
             "qwen2": self._get_env_bool("DENSEMIXER_QWEN2", True),
-            "deepseek_v3": self._get_env_bool("DENSEMIXER_DEEPSEEK_V2", True)
+            "deepseek_v3": self._get_env_bool("DENSEMIXER_DEEPSEEK_V2", True),
+            "gpt_oss": self._get_env_bool("DENSEMIXER_GPT_OSS", True)
         }
 
         self.topk = self._get_env_int("DENSEMIXER_TOPK", None)
+        self.cap_topk = self._get_env_int("DENSEMIXER_CAP_TOPK", None)
     
     def _get_env_int(self, name, default=None):
         """Get integer from environment variable"""
@@ -95,5 +97,7 @@ if config.enabled:
     logger.info("Using TopK mode: %s", config.topk_mode)
     if config.topk is not None:
         logger.info("Overiding MoE top_k with: %d", config.topk)
+    if config.cap_topk is not None:
+        logger.info("Overiding MoE cap_topk with: %d", config.cap_topk)
 else:
     logger.debug("DenseMixer disabled by default. Set DENSEMIXER_ENABLED=1 to enable.")
