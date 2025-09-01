@@ -48,7 +48,8 @@ class Config:
         self.models = {
             "qwen3": self._get_env_bool("DENSEMIXER_QWEN3", True),
             "olmoe": self._get_env_bool("DENSEMIXER_OLMOE", True),
-            "qwen2": self._get_env_bool("DENSEMIXER_QWEN2", True)
+            "qwen2": self._get_env_bool("DENSEMIXER_QWEN2", True),
+            "deepseek_v3": self._get_env_bool("DENSEMIXER_DEEPSEEK_V2", True)
         }
 
         self.topk = self._get_env_int("DENSEMIXER_TOPK", None)

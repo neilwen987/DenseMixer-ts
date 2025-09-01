@@ -61,6 +61,12 @@ def apply_patches(config):
             implementation = "conventional" if config.use_conventional_implementation() else "densemixer"
             patched_models.append(f"Qwen3-MoE-{implementation}")
 
+    # Patch DeepSeek-V3/Moonlight if enabled
+    if config.is_model_enabled("deepseek_v3"):
+        if apply_deepseek_v3_patch(config):
+            implementation = "conventional" if config.use_conventional_implementation() else "densemixer"
+            patched_models.append(f"DeepSeekV3-{implementation}")
+
     # Patch GPT-OSS-MoE if enabled
     if config.is_model_enabled("gpt_oss"):
         if apply_gpt_oss_moe_patch(config):
@@ -88,8 +94,25 @@ def apply_gpt_oss_moe_patch(config):
     except ImportError as e:
         logger.warning(f"GPT-OSS-MoE module not found: {e}")
         return False
+
+def apply_deepseek_v3_patch(config):
+    """Apply patch to DeepSeek-V3/Moonlight MoE model"""
+
+    try:
+        from transformers.models.deepseek_v2.modeling_deepseek_v2 import DeepseekV2MoE,DeepseekV2MoEGate
+        from .models.deepseek_v2_custom import CustomDeepseekV2MoE,CustomDeepseekV2MoEGate
+
+            # Apply the DenseMixer patch
+        DeepseekV2MoE.forward = CustomDeepseekV2MoE.forward
+        DeepseekV2MoEGate.forward = CustomDeepseekV2MoEGate.forward
+        logger.info("Successfully patched Deepseekv2 with DenseMixer implementation")
+        
+        return True
+    except ImportError as e:
+        logger.warning(f"Deepseekv2-MoE module not found: {e}")
+        return False
     except Exception as e:
-        logger.error(f"Error patching GPT-OSS-MoE: {e}")
+        logger.error(f"Error patching Deepseekv2-MoE: {e}")
         return False
 
 def apply_olmoe_patch(config):
