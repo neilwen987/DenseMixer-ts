@@ -14,10 +14,26 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from transformers import Seq2SeqTrainingArguments
 from transformers.training_args import _convert_str_dict
+import transformers.training_args as _hf_training_args  # type: ignore
+
+# Some transformers versions annotate fields with ParallelismConfig; ensure name is resolvable at type-hint eval time
+try:  # pragma: no cover - compatibility shim
+    from transformers.training_args import ParallelismConfig  # type: ignore
+except Exception:  # pragma: no cover - fallback when not present
+    ParallelismConfig = Any  # type: ignore
+
+# Ensure transformers' own module also has a resolvable ParallelismConfig symbol during type hint evaluation
+try:  # pragma: no cover
+    getattr(_hf_training_args, "ParallelismConfig")
+except Exception:  # pragma: no cover
+    try:
+        _hf_training_args.ParallelismConfig = ParallelismConfig  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 from ..extras.misc import use_ray
 

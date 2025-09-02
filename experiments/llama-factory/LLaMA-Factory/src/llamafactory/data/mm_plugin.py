@@ -58,7 +58,29 @@ if is_transformers_version_greater_than("4.45.0"):
 
 
 if is_transformers_version_greater_than("4.49.0"):
-    from transformers.image_utils import make_batched_videos, make_flat_list_of_images
+    # Newer transformers versions are expected to expose these utilities, but guard in case of API changes
+    try:
+        from transformers.image_utils import make_batched_videos, make_flat_list_of_images
+    except Exception:
+        # Fallbacks to keep import-time compatibility across transformers versions
+        try:
+            from transformers.image_utils import make_flat_list_of_images  # type: ignore
+        except Exception:
+            def make_flat_list_of_images(images):  # type: ignore
+                return images
+
+        def make_batched_videos(videos):  # type: ignore
+            return videos
+else:
+    # Older transformers versions: provide safe fallbacks
+    try:
+        from transformers.image_utils import make_flat_list_of_images  # type: ignore
+    except Exception:
+        def make_flat_list_of_images(images):  # type: ignore
+            return images
+
+    def make_batched_videos(videos):  # type: ignore
+        return videos
 
 
 if TYPE_CHECKING:
