@@ -60,6 +60,12 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             self.processing_class: PreTrainedTokenizer = kwargs.get("tokenizer")
 
         super().__init__(**kwargs)
+        # Compatibility: newer Transformers expects Accelerate to expose `parallelism_config`
+        if not hasattr(self.accelerator, "parallelism_config"):
+            try:
+                self.accelerator.parallelism_config = None  # type: ignore[attr-defined]
+            except Exception:
+                pass
         if processor is not None:
             # avoid wrong loss under gradient accumulation
             # https://github.com/huggingface/transformers/pull/36044#issuecomment-2746657112
@@ -93,11 +99,17 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         return super().create_scheduler(num_training_steps, optimizer)
 
     @override
-    def _get_train_sampler(self) -> Optional["torch.utils.data.Sampler"]:
+    def _get_train_sampler(self, train_dataset: Optional["Dataset"] = None) -> Optional["torch.utils.data.Sampler"]:
+        dataset = train_dataset if train_dataset is not None else self.train_dataset
         if self.finetuning_args.disable_shuffling:
-            return torch.utils.data.SequentialSampler(self.train_dataset)
+            return torch.utils.data.SequentialSampler(dataset)
 
-        return super()._get_train_sampler()
+        # Forward the dataset if the base implementation expects it (newer transformers)
+        try:
+            return super()._get_train_sampler(dataset)  # type: ignore[arg-type]
+        except TypeError:
+            # Backwards compatibility with older transformers versions
+            return super()._get_train_sampler()
 
     @override
     def compute_loss(self, model, inputs, *args, **kwargs):
