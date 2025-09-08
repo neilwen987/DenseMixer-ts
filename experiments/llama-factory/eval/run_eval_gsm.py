@@ -56,6 +56,8 @@ def main(args):
     if args.max_examples and len(test_data) > args.max_examples:
         test_data = random.sample(test_data, args.max_examples)
 
+    # test_data = test_data[:600]  # limit to first 100 examples for quicker evaluation during testing
+    test_data = test_data[600:]
     ensure_dir(args.save_dir)
 
     prompt_prefix = "Answer the following question.\n\n"
