@@ -30,7 +30,7 @@ export DENSEMIXER_ENABLED=1
 export DENSEMIXER_QWEN3=0
 export DENSEMIXER_QWEN2=0
 export DENSEMIXER_OLMOE=1
-export DENSEMIXER_TOPK_MODE="topk"
+export DENSEMIXER_TOPK_MODE=batch_topk
 
 
 # Vanilla Router-Full

@@ -3,6 +3,7 @@ export DENSEMIXER_ENABLED=1
 export DENSEMIXER_QWEN3=0
 export DENSEMIXER_QWEN2=1
 export DENSEMIXER_OLMOE=0
+export DENSEMIXER_TOPK_MODE=batch_topk
 # create log dir (if not exist)
 LOGS_DIR="logs"
 mkdir -p $LOGS_DIR
@@ -16,7 +17,7 @@ CONFIG_FILES=(
     # "qwen1.5_gsm_lr3e-6.yaml"
 )
 
-export WANDB_API_KEY="$WANDB_API_KEY"
+export WANDB_API_KEY="1532edc16234575030f74f9a5edbfa977ec1ee4b"
 export WANDB_PROJECT="MoE-Finetune-qwen1.5"
 export DISABLE_VERSION_CHECK=1
 
@@ -32,7 +33,7 @@ for config_file in "${CONFIG_FILES[@]}"; do
     echo "log saved at: $LOG_FILE"
     
     # define the command
-    CMD="CUDA_VISIBLE_DEVICES=4,5,6,7 llamafactory-cli train examples/train_full/qwen1.5moe/${method}/${config_file}"
+    CMD="CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 llamafactory-cli train examples/train_full/qwen1.5moe/${method}/${config_file}"
     
     # log the command
     echo "executing command: $CMD" | tee $LOG_FILE

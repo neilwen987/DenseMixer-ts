@@ -1,10 +1,18 @@
 import torch
+import os
 import torch.nn.functional as F
 from wandb import config
 from ..logging_utils import log_custom_forward_usage
 from .. import config as densemixer_config
 _layer_routing_cache = {}
+_layer_selected_cache = {}  # 仅保留被选择的专家权重（未选位置为0），形状 [B, S, E]
 _generation_mode = False  # 标记是否在生成模式
+# 为每个 MoE 层分配稳定顺序索引（0..N-1）
+_layer_idx_registry = {}
+_next_layer_idx = 0
+# 跨 batch 累计（按 token 维度展平）后的缓存：形状 [T, E]
+_accum_routing_cache = {}
+_accum_selected_cache = {}
 class CustomOlmoeSparseMoeBlock:
     @staticmethod
     def forward(self, hidden_states: torch.Tensor):
@@ -18,7 +26,15 @@ class CustomOlmoeSparseMoeBlock:
 
         flat_hidden = hidden_states.view(-1, hidden_dim)  # (B*seq_len, hidden_dim)
         N_tokens = flat_hidden.size(0)
-        layer_id = getattr(self, 'layer_idx', id(self))
+        # 为当前模块分配稳定的顺序 layer_idx
+        global _layer_idx_registry, _next_layer_idx
+        if not hasattr(self, 'layer_idx'):
+            key = id(self)
+            if key not in _layer_idx_registry:
+                _layer_idx_registry[key] = _next_layer_idx
+                _next_layer_idx += 1
+            self.layer_idx = _layer_idx_registry[key]
+        layer_id = self.layer_idx
         if not hasattr(self, 'i'):
             self.i = 0
         self.i += 1
@@ -37,6 +53,39 @@ class CustomOlmoeSparseMoeBlock:
             # Select top-k experts
             routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
             # print('using topk')
+            # 缓存：全量 routing 分布与被选位置的权重（未选为0），形状统一为 [B, S, E]
+            try:
+                # 仅在首次（通常是整段 prompt，seq_length>1）写入缓存；后续生成步（seq_length==1）不覆盖
+                if seq_length > 1:
+                    full_routing_bsxe = routing_weights.view(batch_size, seq_length, -1)
+                    # selected mask: [N_tokens, E]
+                    selected_mask = F.one_hot(selected_experts, num_classes=self.num_experts).sum(dim=1).to(routing_weights.dtype)
+                    selected_only = (routing_weights * selected_mask)
+                    selected_only_bsxe = selected_only.view(batch_size, seq_length, -1)
+
+                    # 仅在首次批次时，保留一个参考的 [B,S,E]（用于兼容旧用法）
+                    if layer_id not in _layer_routing_cache:
+                        _layer_routing_cache[layer_id] = full_routing_bsxe.detach().clone()
+                    if layer_id not in _layer_selected_cache:
+                        _layer_selected_cache[layer_id] = selected_only_bsxe.detach().clone()
+
+                    # 跨 batch 累计到 [T,E]
+                    full_flat = full_routing_bsxe.reshape(-1, self.num_experts)
+                    sel_flat = selected_only_bsxe.reshape(-1, self.num_experts)
+                    if layer_id in _accum_routing_cache:
+                        _accum_routing_cache[layer_id] = torch.cat([
+                            _accum_routing_cache[layer_id], full_flat.detach().clone()
+                        ], dim=0)
+                    else:
+                        _accum_routing_cache[layer_id] = full_flat.detach().clone()
+                    if layer_id in _accum_selected_cache:
+                        _accum_selected_cache[layer_id] = torch.cat([
+                            _accum_selected_cache[layer_id], sel_flat.detach().clone()
+                        ], dim=0)
+                    else:
+                        _accum_selected_cache[layer_id] = sel_flat.detach().clone()
+            except Exception:
+                pass
         elif densemixer_config.topk_mode == "batch_topk":
             # Select top-k experts per batch.
             # print('using btopk  ')
@@ -48,49 +97,28 @@ class CustomOlmoeSparseMoeBlock:
         
         elif densemixer_config.topk_mode == "sample_topk":
             # print('using sample_topk')
-            horizon_list = [64,128,256]
-            horizon = horizon_list[torch.randint(0, len(horizon_list), (1,)).item()]
+            # horizon_list = [64,128,256]
+            # horizon = horizon_list[torch.randint(0, len(horizon_list), (1,)).item()]
+            horizon = torch.randint(0, 256, (1,)).item()
 
             if self.training:
                 # print('use traing')
                 routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
-
-                if seq_length <= horizon:
-                    _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.top_k + 2), dim=-1)
-                    max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-                    routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
+                # _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.top_k + 4), dim=-1)
+                # max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
+                # routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
 
 
-                    _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
+                _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
 
-                    _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
-                    
-                    select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
-                    select_mask.scatter_(-1, top1_indices, True)
-                    expert_counts = (select_mask > 0).sum(dim=-1) 
-                    max_experts_per_token = expert_counts.max()
-                    filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
-                    routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
-                else:
-                    # using topk
-                    _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.top_k + 2), dim=-1)
-                    max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-                    routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
-
-                    _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
-
-                    _, topk_indices = torch.topk(routing_weights_reshaped[:, :-horizon, :], k=self.top_k, dim=-1)
-                    _, flat_indices = torch.topk(routing_weights_reshaped[:, -horizon:, :].view(batch_size, -1), k=self.top_k * horizon, dim=1)
-
-                    mask_topk = torch.zeros_like(routing_weights_reshaped[:, :-horizon, :], dtype=torch.bool).scatter_(-1, topk_indices, True)
-                    mask_flatten = torch.zeros_like(routing_weights_reshaped[:, -horizon:, :].view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped[:, -horizon:, :].shape)
-
-                    select_mask = torch.cat([mask_topk, mask_flatten], dim=1)
-                    select_mask.scatter_(-1, top1_indices, True)
-                    expert_counts = (select_mask > 0).sum(dim=-1) 
-                    max_experts_per_token = expert_counts.max()
-                    filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
-                    routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
+                _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
+                
+                select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
+                select_mask.scatter_(-1, top1_indices, True)
+                expert_counts = (select_mask > 0).sum(dim=-1) 
+                max_experts_per_token = expert_counts.max()
+                filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
+                routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
             else:
                 # print('Using SPTopk,this is the {}-th call of this layer'.format(self.i))
                 routing_weights_topk, selected_experts = handle_sample_topk_with_cache(
@@ -159,7 +187,7 @@ class CustomOlmoeSparseMoeBlock:
 
 def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size, seq_length, layer_id, N_tokens):
     """处理带缓存的sample_topk"""
-    global _layer_routing_cache, _generation_mode
+    global _layer_routing_cache, _layer_selected_cache, _generation_mode
     
     # 检测是否为生成模式 (seq_length == 1 通常表示生成新token)
     is_generating = seq_length == 1 and layer_id in _layer_routing_cache
@@ -168,9 +196,12 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
         # 生成模式：累积routing_weights
         cached_weights = _layer_routing_cache[layer_id]
         
-        # 将新token的routing_weights追加到历史中
+
         full_routing_weights = torch.cat([cached_weights, routing_weights.view(batch_size, 1, -1)], dim=1) # B, S+1, E
-        seq_length = full_routing_weights.size(1)  # 更新序列长度        
+        # _layer_routing_cache[layer_id] = full_routing_weights.detach().clone()
+        
+        seq_length = full_routing_weights.size(1)  # 更新序列长度  
+
         _, top6_indices = torch.topk(full_routing_weights, k=(top_k + 2), dim=-1)
         max_mask = torch.zeros_like(full_routing_weights, dtype=torch.bool).scatter_(-1, top6_indices, True)
         full_routing_weights = full_routing_weights * max_mask.detach()
@@ -192,11 +223,19 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
         routing_weights_topk, selected_experts = torch.topk(
             filtered_scores, max_experts_per_token, dim=-1
         )
-        # 更新缓存  
-        _layer_routing_cache[layer_id] = torch.cat([cached_weights, filtered_scores.view(batch_size, 1, -1)], dim=1)
+        # 更新“选择后”的缓存：仅保留被选位置的权重（未选为0），沿时间维追加
+        last_token_selected = (last_token_routing * last_token_mask.detach()).view(batch_size, 1, -1)  # [B,1,E]
+        _layer_routing_cache[layer_id] = torch.cat([
+                _layer_routing_cache[layer_id], last_token_selected.detach().clone()
+            ], dim=1)
+
     else:
         # 非生成模式或首次调用：直接执行sample_topk并初始化缓存
         routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
+
+        # _layer_routing_cache[layer_id] = routing_weights_reshaped.detach().clone()
+
+
         _, top6_indices = torch.topk(routing_weights_reshaped, k=(top_k + 2), dim=-1)
         max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
         routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
@@ -212,16 +251,33 @@ def handle_sample_topk_with_cache(moe_block, routing_weights, top_k, batch_size,
         filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, moe_block.num_experts)
         routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
         
-        # 初始化缓存
-        _layer_routing_cache[layer_id] = (routing_weights_reshaped * select_mask).detach()
 
+        _layer_routing_cache[layer_id] = (routing_weights_reshaped * select_mask.detach()).detach().clone()
+        flat_selected = (routing_weights_reshaped * select_mask.detach()).reshape(-1, moe_block.num_experts).detach().clone()
+        if layer_id in _accum_routing_cache:
+            _accum_routing_cache[layer_id] = torch.cat([
+                _accum_routing_cache[layer_id], flat_selected
+            ], dim=0)
+        else:
+            _accum_routing_cache[layer_id] = flat_selected
+        # 同步累计“被选位置”版本，便于下游做 CoV/LIR
+        if layer_id in _accum_selected_cache:
+            _accum_selected_cache[layer_id] = torch.cat([
+                _accum_selected_cache[layer_id], flat_selected
+            ], dim=0)
+        else:
+            _accum_selected_cache[layer_id] = flat_selected
+    
     return routing_weights_topk, selected_experts
 
 
 def clear_routing_cache():
     """清空routing缓存 - 在每次新的生成开始时调用"""
-    global _layer_routing_cache
+    global _layer_routing_cache, _layer_selected_cache, _accum_routing_cache, _accum_selected_cache
     _layer_routing_cache.clear()
+    _layer_selected_cache.clear()
+    _accum_routing_cache.clear()
+    _accum_selected_cache.clear()
 
 
 def set_generation_mode(enabled: bool):
@@ -230,7 +286,23 @@ def set_generation_mode(enabled: bool):
     _generation_mode = enabled
 
 def get_routing_cache_copy():
-    # 返回一个可安全使用的拷贝（避免原地修改）
+    """
+    优先返回“跨 batch 累计后”的选择后缓存（[T,E]）。若不存在，则回退：
+    - 选择后缓存（[B,S,E]，未被选位置为0）
+    - 全量缓存（[T,E] 或 [B,S,E]）
+    """
+    if len(_accum_selected_cache) > 0:
+        return {k: v.detach().clone() for k, v in _accum_selected_cache.items()}
+    if len(_layer_selected_cache) > 0:
+        return {k: v.detach().clone() for k, v in _layer_selected_cache.items()}
+    if len(_accum_routing_cache) > 0:
+        return {k: v.detach().clone() for k, v in _accum_routing_cache.items()}
+    return {k: v.detach().clone() for k, v in _layer_routing_cache.items()}
+
+def get_full_routing_cache_copy():
+    """返回全量weights缓存的拷贝（优先返回累计后的 [T,E]）。"""
+    if len(_accum_routing_cache) > 0:
+        return {k: v.detach().clone() for k, v in _accum_routing_cache.items()}
     return {k: v.detach().clone() for k, v in _layer_routing_cache.items()}
 
 def save_routing_cache(save_dir: str, tag: str = "snapshot"):

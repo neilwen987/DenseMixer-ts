@@ -1,0 +1,71 @@
+\documentclass{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[ruled,vlined]{algorithm2e}
+\usepackage{amsmath,amssymb}
+
+\begin{document}
+
+\begin{algorithm}[H]
+\caption{Sample-TopK with Routing Cache for Generation}
+\KwIn{$moe\_block$ (with $num\_experts$), $routing\_weights$ (shape $B\times E$ or $B\times S\times E$), $top\_k$, $B$ (batch size), $S$ (seq length), $layer\_id$}
+\KwOut{$routing\_weights\_topk \in \mathbb{R}^{(B\cdot S')\times K}$, $selected\_experts \in \mathbb{N}^{(B\cdot S')\times K}$}
+\BlankLine
+Global cache $C$: map from $layer\_id$ to tensor of shape $(B, S^{hist}, E)$\;
+$is\_generating \gets (S = 1) \wedge (layer\_id \in C)$\;
+
+\uIf{$is\_generating$}{
+    $cached \gets C[layer\_id] \in \mathbb{R}^{B\times S^{hist}\times E}$\;
+    $new \gets \mathrm{view}(routing\_weights, B, 1, E)$\;
+    $full \gets \mathrm{concat}(cached,\, new,\; \text{dim}=1)$ \tcp*[r]{$full \in \mathbb{R}^{B\times (S^{hist}+1)\times E}$}
+    $S' \gets \mathrm{len}(full, \text{dim}=1)$\;
+
+    $top6\_idx \gets \mathrm{topk}(full,\; k=top\_k+2,\; \text{dim}=-1)$\;
+    $max\_mask \gets \mathbf{0}_{B\times S'\times E}^{bool}$; $max\_mask \gets \mathrm{scatter}(max\_mask,\; -1,\; top6\_idx,\; True)$\;
+    $full \gets full \odot \mathrm{stopgrad}(max\_mask)$\;
+
+    $top1\_idx \gets \mathrm{topk}(full,\; k=1,\; \text{dim}=-1)$\;
+    $flat\_idx \gets \mathrm{topk}(\mathrm{view}(full,\; B,\; S'\!\cdot\!E),\; k=top\_k\cdot S',\; \text{dim}=1)$\;
+
+    $sel\_flat \gets \mathbf{0}_{B\times S'\cdot E}^{bool}$; $sel\_flat \gets \mathrm{scatter}(sel\_flat,\; -1,\; flat\_idx,\; True)$\;
+    $sel \gets \mathrm{view}(sel\_flat,\; B,\; S',\; E)$\;
+    $sel \gets \mathrm{scatter}(sel,\; -1,\; top1\_idx,\; True)$ \tcp*[r]{ensure top-1 per token}
+
+    $last\_mask \gets sel[:, S'-1, :] \in \{0,1\}^{B\times E}$\;
+    $last\_routing \gets \mathrm{view}(routing\_weights,\; B,\; E)$\;
+    $filtered \gets last\_routing \odot \mathrm{stopgrad}(last\_mask) \in \mathbb{R}^{B\times E}$\;
+
+    $expert\_counts \gets \sum\nolimits_{e} (last\_mask > 0)$ \tcp*[r]{per-sample selected experts}
+    $K \gets \max(expert\_counts)$\;
+
+    $(routing\_weights\_topk,\; selected\_experts) \gets \mathrm{topk}(filtered,\; k=K,\; \text{dim}=-1)$\;
+
+    $C[layer\_id] \gets \mathrm{concat}(cached,\; \mathrm{view}(filtered, B, 1, E),\; \text{dim}=1)$\;
+}
+\Else{
+    $W \gets \mathrm{view}(routing\_weights,\; B,\; S,\; E)$\;
+
+    $top6\_idx \gets \mathrm{topk}(W,\; k=top\_k+2,\; \text{dim}=-1)$\;
+    $max\_mask \gets \mathbf{0}_{B\times S\times E}^{bool}$; $max\_mask \gets \mathrm{scatter}(max\_mask,\; -1,\; top6\_idx,\; True)$\;
+    $W' \gets W \odot \mathrm{stopgrad}(max\_mask)$\;
+
+    $top1\_idx \gets \mathrm{topk}(W',\; k=1,\; \text{dim}=-1)$\;
+    $flat\_idx \gets \mathrm{topk}(\mathrm{view}(W',\; B,\; S\!\cdot\!E),\; k=top\_k\cdot S,\; \text{dim}=1)$\;
+
+    $sel\_flat \gets \mathbf{0}_{B\times S\cdot E}^{bool}$; $sel\_flat \gets \mathrm{scatter}(sel\_flat,\; -1,\; flat\_idx,\; True)$\;
+    $sel \gets \mathrm{view}(sel\_flat,\; B,\; S,\; E)$\;
+    $sel \gets \mathrm{scatter}(sel,\; -1,\; top1\_idx,\; True)$\;
+
+    $expert\_counts \gets \sum\nolimits_{e} (sel > 0)$ \tcp*[r]{$B\times S$}
+    $K \gets \max(expert\_counts)$\;
+
+    $filtered \gets (W' \odot \mathrm{stopgrad}(sel)) \in \mathbb{R}^{B\times S\times E}$\;
+    $(routing\_weights\_topk,\; selected\_experts) \gets \mathrm{topk}(\mathrm{view}(filtered, B\cdot S, E),\; k=K,\; \text{dim}=-1)$\;
+
+    $C[layer\_id] \gets \mathrm{stopgrad}(sel \odot W')$ \tcp*[r]{initialize cache}
+}
+\Return{$routing\_weights\_topk,\; selected\_experts$}\;
+\end{algorithm}
+
+\end{document}
+
+

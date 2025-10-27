@@ -43,6 +43,12 @@ class CustomQwen2MoeSparseMoeBlock:
         if densemixer_config.topk_mode == "topk":
             # print('Using Topk,this is the {}-th call of this layer'.format(self.i))
             routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+        elif densemixer_config.topk_mode == "batch_topk":
+            top_k_logits_flat, top_k_indices_flat = torch.topk(routing_weights.flatten(), self.top_k * N_tokens, dim=-1)
+            routing_weights_btopk = torch.zeros_like(routing_weights.flatten()).scatter_(-1, top_k_indices_flat, top_k_logits_flat).reshape(routing_weights.shape)
+            num_selected_per_token = (routing_weights_btopk > 0).sum(dim=-1)  # (N_tokens,)
+            max_selected = int(num_selected_per_token.max().item())
+            routing_weights_topk, selected_experts = torch.topk(routing_weights_btopk, max_selected, dim=-1)
         elif densemixer_config.topk_mode == "sample_topk":
             # print('using sample_topk')
             if self.training:

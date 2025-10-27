@@ -11,7 +11,7 @@ deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, 
 ### dataset
 dataset: s1k_1.1_16k
 template: qwen3
-cutoff_len: 16384
+cutoff_len: 512
 max_samples: 100000
 overwrite_cache: true
 preprocessing_num_workers: 16
@@ -30,7 +30,7 @@ run_name: ste_s1_sl16k_bs16_lr1e-5_zero3_partscale_fixed_ex_normdtch
 
 
 ### train
-per_device_train_batch_size: 2
+per_device_train_batch_size: 1
 gradient_accumulation_steps: 1
 learning_rate: 1.0e-5
 num_train_epochs: 5.0
