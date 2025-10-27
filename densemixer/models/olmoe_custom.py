@@ -48,49 +48,26 @@ class CustomOlmoeSparseMoeBlock:
         
         elif densemixer_config.topk_mode == "sample_topk":
             # print('using sample_topk')
-            horizon_list = [64,128,256]
-            horizon = horizon_list[torch.randint(0, len(horizon_list), (1,)).item()]
 
             if self.training:
                 # print('use traing')
                 routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
 
-                if seq_length <= horizon:
-                    _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.top_k + 2), dim=-1)
-                    max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-                    routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
+                _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.top_k + 2), dim=-1)
+                max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
+                routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
 
 
-                    _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
+                _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
 
-                    _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
-                    
-                    select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
-                    select_mask.scatter_(-1, top1_indices, True)
-                    expert_counts = (select_mask > 0).sum(dim=-1) 
-                    max_experts_per_token = expert_counts.max()
-                    filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
-                    routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
-                else:
-                    # using topk
-                    _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.top_k + 2), dim=-1)
-                    max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-                    routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
-
-                    _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
-
-                    _, topk_indices = torch.topk(routing_weights_reshaped[:, :-horizon, :], k=self.top_k, dim=-1)
-                    _, flat_indices = torch.topk(routing_weights_reshaped[:, -horizon:, :].view(batch_size, -1), k=self.top_k * horizon, dim=1)
-
-                    mask_topk = torch.zeros_like(routing_weights_reshaped[:, :-horizon, :], dtype=torch.bool).scatter_(-1, topk_indices, True)
-                    mask_flatten = torch.zeros_like(routing_weights_reshaped[:, -horizon:, :].view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped[:, -horizon:, :].shape)
-
-                    select_mask = torch.cat([mask_topk, mask_flatten], dim=1)
-                    select_mask.scatter_(-1, top1_indices, True)
-                    expert_counts = (select_mask > 0).sum(dim=-1) 
-                    max_experts_per_token = expert_counts.max()
-                    filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
-                    routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
+                _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
+                
+                select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
+                select_mask.scatter_(-1, top1_indices, True)
+                expert_counts = (select_mask > 0).sum(dim=-1) 
+                max_experts_per_token = expert_counts.max()
+                filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
+                routing_weights_topk, selected_experts = torch.topk(filtered_scores, k=max_experts_per_token, dim=1)
             else:
                 # print('Using SPTopk,this is the {}-th call of this layer'.format(self.i))
                 routing_weights_topk, selected_experts = handle_sample_topk_with_cache(
