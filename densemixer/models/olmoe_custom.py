@@ -57,13 +57,25 @@ class CustomOlmoeSparseMoeBlock:
                 max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
                 routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
 
+            # _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
+            
+                if densemixer_config.causal_mode:
+                    select_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool)
+                    for t in range(seq_length):
+                        routing_weights_reshaped_t = routing_weights_reshaped[:, :t+1, :]
+                        if t > 0:
+                            _, flat_indices = torch.topk(routing_weights_reshaped_t.view(batch_size, -1), k= (t+1) * self.top_k, dim=1)
+                            mask_tmp = torch.zeros_like(routing_weights_reshaped_t.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped_t.shape)
+                            select_mask[:, t, :] = mask_tmp[:, -1, :]
+                        else:
+                            _, indices = torch.topk(routing_weights_reshaped_t.squeeze(), k=1, dim=-1)
+                            select_mask[:, t, :] = F.one_hot(indices.squeeze(), num_classes=self.num_experts).to(dtype)
+                else:
+                    _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
+                    
+                    select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
+                    # select_mask.scatter_(-1, top1_indices, True)
 
-                _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
-
-                _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
-                
-                select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
-                select_mask.scatter_(-1, top1_indices, True)
                 expert_counts = (select_mask > 0).sum(dim=-1) 
                 max_experts_per_token = expert_counts.max()
                 filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)
