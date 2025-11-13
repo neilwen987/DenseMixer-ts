@@ -2,6 +2,7 @@ import torch
 import os
 import torch.nn.functional as F
 from wandb import config
+import wandb
 from ..logging_utils import log_custom_forward_usage
 from .. import config as densemixer_config
 _layer_routing_cache = {}
@@ -54,38 +55,38 @@ class CustomOlmoeSparseMoeBlock:
             routing_weights_topk, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
             # print('using topk')
             # 缓存：全量 routing 分布与被选位置的权重（未选为0），形状统一为 [B, S, E]
-            try:
-                # 仅在首次（通常是整段 prompt，seq_length>1）写入缓存；后续生成步（seq_length==1）不覆盖
-                if seq_length > 1:
-                    full_routing_bsxe = routing_weights.view(batch_size, seq_length, -1)
-                    # selected mask: [N_tokens, E]
-                    selected_mask = F.one_hot(selected_experts, num_classes=self.num_experts).sum(dim=1).to(routing_weights.dtype)
-                    selected_only = (routing_weights * selected_mask)
-                    selected_only_bsxe = selected_only.view(batch_size, seq_length, -1)
+            # try:
+            #     # 仅在首次（通常是整段 prompt，seq_length>1）写入缓存；后续生成步（seq_length==1）不覆盖
+            #     if seq_length > 1:
+            #         full_routing_bsxe = routing_weights.view(batch_size, seq_length, -1)
+            #         # selected mask: [N_tokens, E]
+            #         selected_mask = F.one_hot(selected_experts, num_classes=self.num_experts).sum(dim=1).to(routing_weights.dtype)
+            #         selected_only = (routing_weights * selected_mask)
+            #         selected_only_bsxe = selected_only.view(batch_size, seq_length, -1)
 
-                    # 仅在首次批次时，保留一个参考的 [B,S,E]（用于兼容旧用法）
-                    if layer_id not in _layer_routing_cache:
-                        _layer_routing_cache[layer_id] = full_routing_bsxe.detach().clone()
-                    if layer_id not in _layer_selected_cache:
-                        _layer_selected_cache[layer_id] = selected_only_bsxe.detach().clone()
+            #         # 仅在首次批次时，保留一个参考的 [B,S,E]（用于兼容旧用法）
+            #         if layer_id not in _layer_routing_cache:
+            #             _layer_routing_cache[layer_id] = full_routing_bsxe.detach().clone()
+            #         if layer_id not in _layer_selected_cache:
+            #             _layer_selected_cache[layer_id] = selected_only_bsxe.detach().clone()
 
-                    # 跨 batch 累计到 [T,E]
-                    full_flat = full_routing_bsxe.reshape(-1, self.num_experts)
-                    sel_flat = selected_only_bsxe.reshape(-1, self.num_experts)
-                    if layer_id in _accum_routing_cache:
-                        _accum_routing_cache[layer_id] = torch.cat([
-                            _accum_routing_cache[layer_id], full_flat.detach().clone()
-                        ], dim=0)
-                    else:
-                        _accum_routing_cache[layer_id] = full_flat.detach().clone()
-                    if layer_id in _accum_selected_cache:
-                        _accum_selected_cache[layer_id] = torch.cat([
-                            _accum_selected_cache[layer_id], sel_flat.detach().clone()
-                        ], dim=0)
-                    else:
-                        _accum_selected_cache[layer_id] = sel_flat.detach().clone()
-            except Exception:
-                pass
+            #         # 跨 batch 累计到 [T,E]
+            #         full_flat = full_routing_bsxe.reshape(-1, self.num_experts)
+            #         sel_flat = selected_only_bsxe.reshape(-1, self.num_experts)
+            #         if layer_id in _accum_routing_cache:
+            #             _accum_routing_cache[layer_id] = torch.cat([
+            #                 _accum_routing_cache[layer_id], full_flat.detach().clone()
+            #             ], dim=0)
+            #         else:
+            #             _accum_routing_cache[layer_id] = full_flat.detach().clone()
+            #         if layer_id in _accum_selected_cache:
+            #             _accum_selected_cache[layer_id] = torch.cat([
+            #                 _accum_selected_cache[layer_id], sel_flat.detach().clone()
+            #             ], dim=0)
+            #         else:
+            #             _accum_selected_cache[layer_id] = sel_flat.detach().clone()
+            # except Exception:
+            #     pass
         elif densemixer_config.topk_mode == "batch_topk":
             # Select top-k experts per batch.
             # print('using btopk  ')
@@ -104,17 +105,17 @@ class CustomOlmoeSparseMoeBlock:
             if self.training:
                 # print('use traing')
                 routing_weights_reshaped = routing_weights.view(batch_size, seq_length, -1)  # (N, Seq_length, Expert)
-                # _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.top_k + 4), dim=-1)
-                # max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
-                # routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
+                _, top6_indices = torch.topk(routing_weights_reshaped, k=(self.top_k + 2), dim=-1)
+                max_mask = torch.zeros_like(routing_weights_reshaped, dtype=torch.bool).scatter_(-1, top6_indices, True)
+                routing_weights_reshaped = routing_weights_reshaped * max_mask.detach()
 
 
-                _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
+                # _, top1_indices = torch.topk(routing_weights_reshaped, k=1, dim=-1)
 
                 _, flat_indices = torch.topk(routing_weights_reshaped.view(batch_size, -1), k=self.top_k * seq_length, dim=1)
                 
                 select_mask = torch.zeros_like(routing_weights_reshaped.view(batch_size, -1), dtype=torch.bool).scatter_(-1, flat_indices, True).reshape(routing_weights_reshaped.shape)
-                select_mask.scatter_(-1, top1_indices, True)
+                # select_mask.scatter_(-1, top1_indices, True)
                 expert_counts = (select_mask > 0).sum(dim=-1) 
                 max_experts_per_token = expert_counts.max()
                 filtered_scores = (routing_weights_reshaped * select_mask.detach()).view(-1, self.num_experts)

@@ -40,9 +40,11 @@ bash scripts/train/finetune/full.sh \
     --num_train_epochs 3 \
     --num_gpus 8 \
     --devices 0,1,2,3,4,5,6,7 \
-    --port 29000 \
+    --port 29040 \
     --lr 1e-6 \
     --do_eval false \
+    --topk 8 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 4 \
-    --gradient_checkpointing True
+    --gradient_checkpointing True \
+    --load_balancing_loss True

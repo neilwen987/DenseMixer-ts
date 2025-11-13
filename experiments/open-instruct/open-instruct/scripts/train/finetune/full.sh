@@ -174,8 +174,8 @@ elif [ "$DENSEMIXER_TOPK_MODE" = "sample_topk" ]; then
     mode_str="sptopk"
 fi
 
-EXP_NAME="$MODEL_TYPE-$TASK-${mode_str}-$TOPK"
-OUTPUT_DIR="${OUTPUT_BASE_DIR}${MODEL_TYPE}-${mode_str}-$TOPK"
+EXP_NAME="$MODEL_TYPE-$TASK-${mode_str}-aux-$TOPK-debug"
+OUTPUT_DIR="${OUTPUT_BASE_DIR}${MODEL_TYPE}-${mode_str}-aux-$TOPK-debug"
 
 # pass custom topk to densemixer
 export DENSEMIXER_TOPK="${TOPK}"
@@ -235,9 +235,10 @@ TRAIN_CMD="CUDA_VISIBLE_DEVICES=${CUDA_DEVICES} accelerate launch \
     --logging_steps 1 \
     --reduce_loss sum \
     --model_revision main \
-    --wandb_project_name MoE-Finetune-scaling_k \
+    --wandb_project_name MoE-Finetune-rebuttal \
+    --load_balancing_loss True\
     --dataset_name $DATASET_NAME  \
-    --do_eval \
+    --do_eval False\
     --train_file ${TRAIN_FILE} \
     ${TEST_FILE_OPT} \
     --evaluation_strategy "epoch" \

@@ -1105,10 +1105,11 @@ def main(args: FlatArguments):
             local_total_tokens += batch["attention_mask"].sum()
             total_token_including_padding += batch["attention_mask"].numel()
             with accelerator.accumulate(model):
-                outputs = model(**batch, use_cache=False)
+                if args.load_balancing_loss:
+                    outputs = model(**batch, use_cache=False, output_router_logits=True)   
+                else:
+                    outputs = model(**batch, use_cache=False)
                 loss = outputs.loss
-                # if args.load_balancing_loss:
-                #     outputs = model(**batch, use_cache=False, output_router_logits=True)
                 # else:
                 #     # TODO: we have calculated the mean loss here anyway, so doubling the calculation
                 #     outputs = model(**batch, use_cache=False)
@@ -1141,7 +1142,7 @@ def main(args: FlatArguments):
                 total_loss += loss.detach().float()
                 accelerator.backward(loss)
                 if args.load_balancing_loss:
-                    total_aux_loss += aux_loss.detach().float()
+                    total_aux_loss += outputs.aux_loss.detach().float()
                 # clip gradient norm. don't do this with deepspeed
                 if accelerator.sync_gradients and args.clip_grad_norm > 0:
                     accelerator.clip_grad_norm_(model.parameters(), args.clip_grad_norm)

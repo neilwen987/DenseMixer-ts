@@ -30,7 +30,7 @@ export DENSEMIXER_ENABLED=1
 export DENSEMIXER_QWEN3=0
 export DENSEMIXER_QWEN2=0
 export DENSEMIXER_OLMOE=1
-export DENSEMIXER_TOPK_MODE=batch_topk
+export DENSEMIXER_TOPK_MODE=topk
 
 # Vanilla Router-Full.
 bash scripts/train/finetune/full.sh \
@@ -40,10 +40,11 @@ bash scripts/train/finetune/full.sh \
     --num_train_epochs 3 \
     --num_gpus 8 \
     --devices 0,1,2,3,4,5,6,7 \
-    --port 29000 \
+    --port 29001 \
     --lr 1e-6 \
     --do_eval false \
-    --topk 2 \
+    --topk 8 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 1 \
-    --gradient_checkpointing True
+    --gradient_checkpointing True \
+    --load_balancing_loss True
