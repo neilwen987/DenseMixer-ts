@@ -544,6 +544,35 @@ class FlatArguments:
             raise ValueError("Cannot launch Beaker evaluation jobs without pushing to the Hub.")
 
 
+class ZeroExpert(nn.Module):
+    def forward(self, x):
+        return torch.zeros_like(x)
+
+class CopyExpert(nn.Module):
+    def forward(self, x):
+        return x
+
+def inject_experts(model):
+    base = getattr(model, "get_base_model", lambda: model)()
+    hidden_size = base.config.hidden_size
+
+    # 1) 全局 num_experts + 2
+    # base.config.num_experts += 2
+    # # HF 的 OlmoeForCausalLM.forward 用的是 self.num_experts
+    # if hasattr(model, "num_experts"):
+    #     model.num_experts = base.config.num_experts
+
+    # 2) 遍历每层，扩展 experts 并重置 gate
+    for layer in base.model.layers:
+        mlp = layer.mlp
+        device = next(mlp.parameters()).device
+        dtype = next(mlp.parameters()).dtype
+
+        # 扩展 experts
+        mlp.experts[-2] = ZeroExpert().to(device=device, dtype=dtype)
+        mlp.experts[-1] = CopyExpert().to(device=device, dtype=dtype)
+
+
 def main(args: FlatArguments):
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
@@ -720,6 +749,8 @@ def main(args: FlatArguments):
         logger.info("Training new model from scratch")
         model = AutoModelForCausalLM.from_config(config)
     
+    # if_use_moe++
+    # inject_experts(model)
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -866,7 +897,7 @@ def main(args: FlatArguments):
             batch_size=args.per_device_eval_batch_size,
         )
 
-
+    
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "layer_norm.weight"]

@@ -236,7 +236,7 @@ TRAIN_CMD="CUDA_VISIBLE_DEVICES=${CUDA_DEVICES} accelerate launch \
     --reduce_loss sum \
     --model_revision main \
     --wandb_project_name MoE-Finetune-rebuttal \
-    --load_balancing_loss True\
+    --load_balancing_loss False\
     --dataset_name $DATASET_NAME  \
     --do_eval False\
     --train_file ${TRAIN_FILE} \

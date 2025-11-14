@@ -5,6 +5,7 @@ import json
 import random
 import torch
 import evaluate
+import torch.nn as nn
 from utils import (
     generate_completions,
     load_lm_and_tokenizer,
@@ -27,6 +28,32 @@ def trim_output(output):
             output = output.split(prefix)[0]
 
     return output
+
+
+class ZeroExpert(nn.Module):
+    def forward(self, x):
+        return torch.zeros_like(x)
+
+class CopyExpert(nn.Module):
+    def forward(self, x):
+        return x
+
+def replace_last_two_experts_with_special(model):
+    base = getattr(model, "get_base_model", lambda: model)()
+    for layer in base.model.layers:
+        mlp = layer.mlp
+        device = next(mlp.parameters()).device
+        dtype = next(mlp.parameters()).dtype
+
+        # 将最后两个 expert 替换为无参的 zero/copy expert
+        mlp.experts[-2] = ZeroExpert().to(device=device, dtype=dtype)
+        mlp.experts[-1] = CopyExpert().to(device=device, dtype=dtype)
+
+        # 如果担心被优化器/AMP 触及，保险起见可关闭梯度
+        for p in mlp.experts[-2].parameters():
+            p.requires_grad = False
+        for p in mlp.experts[-1].parameters():
+            p.requires_grad = False
 
 def main(args):
     random.seed(42)
@@ -56,8 +83,8 @@ def main(args):
     if args.max_examples and len(test_data) > args.max_examples:
         test_data = random.sample(test_data, args.max_examples)
 
-    # test_data = test_data[:600]  # limit to first 100 examples for quicker evaluation during testing
-    test_data = test_data[600:]
+    # test_data = test_data[:320]  # limit to first 100 examples for quicker evaluation during testing
+    # test_data = test_data[600:]
     ensure_dir(args.save_dir)
 
     prompt_prefix = "Answer the following question.\n\n"
@@ -89,6 +116,9 @@ def main(args):
             device_map="balanced_low_0" if torch.cuda.device_count() > 1 else "auto",
             use_fast_tokenizer=not args.use_slow_tokenizer,
         )
+        # use_moe++
+        # replace_last_two_experts_with_special(model)
+        # print(model)
     elif args.base_model_name_or_path:
         model, tokenizer = load_dexperts_model_and_tokenizer(
             args.base_model_name_or_path,
@@ -97,8 +127,6 @@ def main(args):
             load_in_8bit=args.load_in_8bit,
             use_fast_tokenizer=not args.use_slow_tokenizer,
         )
-    
-
     outputs = generate_completions(
         model=model,
         tokenizer=tokenizer,
